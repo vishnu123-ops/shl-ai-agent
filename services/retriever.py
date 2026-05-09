@@ -1,107 +1,44 @@
-import faiss
-import pickle
-import numpy as np
+import json
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
-from sentence_transformers import SentenceTransformer
+# Load catalog
+with open("data/shl_catalog.json", "r", encoding="utf-8") as f:
+    catalog = json.load(f)
 
+# Create searchable text
+texts = []
 
-# Load embedding model
-model = SentenceTransformer(
-    'all-MiniLM-L6-v2'
-)
-
-# Load FAISS index
-index = faiss.read_index(
-    "embeddings/faiss.index"
-)
-
-# Load metadata
-with open(
-    "embeddings/metadata.pkl",
-    "rb"
-) as f:
-
-    metadata = pickle.load(f)
-
-
-def retrieve_assessments(
-    query,
-    analysis,
-    top_k=10
-):
-
-    # Convert query to embedding
-    query_embedding = model.encode([query])
-
-    # Search FAISS
-    distances, indices = index.search(
-        np.array(query_embedding),
-        top_k
+for item in catalog:
+    combined = (
+        item.get("name", "") + " " +
+        item.get("description", "") + " " +
+        " ".join(item.get("skills", []))
     )
+    texts.append(combined)
 
-    scored_results = []
+# TF-IDF vectorizer
+vectorizer = TfidfVectorizer()
 
-    for distance, idx in zip(
-        distances[0],
-        indices[0]
-    ):
+X = vectorizer.fit_transform(texts)
 
-        item = metadata[idx]
+def retrieve_assessments(query, top_k=5):
 
-        # Ignore weak matches
-        if distance > 2.0:
-            continue
+    query_vector = vectorizer.transform([query])
 
-        bonus = 0
+    similarities = cosine_similarity(query_vector, X)[0]
 
-        # Keyword overlap scoring
-        for skill in item["skills"]:
+    ranked_indices = similarities.argsort()[::-1]
 
-            if skill.lower() in query.lower():
-                bonus += 1
+    results = []
 
-        # Technical preference
-        if (
-            analysis["needs_coding"]
-            and item["test_type"] == "K"
-        ):
-            bonus += 2
+    for idx in ranked_indices[:top_k]:
+        item = catalog[idx]
 
-        # Personality preference
-        if (
-            analysis["needs_personality"]
-            and item["test_type"] == "P"
-        ):
-            bonus += 2
+        results.append({
+            "name": item.get("name"),
+            "url": item.get("url"),
+            "test_type": item.get("test_type")
+        })
 
-        # Final ranking score
-        final_score = (
-            float(distance) - bonus
-        )
-
-        scored_results.append(
-            (final_score, item)
-        )
-
-    # Sort by best score
-    scored_results.sort(
-        key=lambda x: x[0]
-    )
-
-    final_results = []
-
-    added_names = set()
-
-    for score, item in scored_results:
-
-        # Avoid duplicates
-        if item["name"] in added_names:
-            continue
-
-        added_names.add(
-            item["name"]
-        )
-
-        final_results.append(item)
-
-    return final_results[:5]
+    return results
