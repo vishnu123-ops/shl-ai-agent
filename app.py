@@ -19,6 +19,12 @@ def health():
         "status": "ok"
     }
 
+@app.get("/")
+def root():
+    return {
+        "message": "SHL AI Agent API is running"
+    }
+
 
 @app.post(
     "/chat",
